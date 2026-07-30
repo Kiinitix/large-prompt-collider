@@ -1,0 +1,182 @@
+# Quick start:            docker compose up --build
+# With Postgres instead
+# of SQLite:               docker compose --profile postgres up --build
+#
+# See docs/DOCUMENTATION.md for the full config reference (MQTT auth/TLS,
+# rate limiting, replay capture, alerting, etc.) -- the env vars below are
+# a reasonable starting point, mostly with new features left off/permissive
+# for a first run, matching the original test-network-only defaults.
+
+services:
+  # --- Master machine services ---------------------------------------
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    ports:
+      - "1883:1883"
+      # - "8883:8883"   # uncomment if using mosquitto.tls.conf.example
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      # - ./mosquitto/config/passwd:/mosquitto/config/passwd:ro          # if using auth
+      # - ./mosquitto/config/certs:/mosquitto/config/certs:ro            # if using TLS
+      - mosquitto-data:/mosquitto/data
+    networks:
+      - genai-net
+
+  # Optional Postgres backend for the collector. Only starts if you run
+  # `docker compose --profile postgres up`. Set DB_BACKEND=postgres (and
+  # the PG_* vars below) on the collector to use it instead of SQLite.
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: genai_tracker
+      POSTGRES_USER: genai_tracker
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - genai-net
+
+  collector:
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+    container_name: collector
+    depends_on:
+      - mosquitto
+    environment:
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      MQTT_TOPIC_SUBSCRIBE: "genai/track/#"
+      # MQTT_USERNAME: alice                     # if using auth (see mosquitto/gen-passwd.sh)
+      # MQTT_PASSWORD: supersecret
+      # MQTT_USE_TLS: "true"                     # if using TLS (see mosquitto/gen-certs.sh)
+      # MQTT_CA_CERT: /mosquitto-certs/ca.crt
+
+      DB_BACKEND: sqlite                         # "sqlite" (default) or "postgres"
+      DB_PATH: /data/events.db
+      # PG_HOST: postgres
+      # PG_PORT: "5432"
+      # PG_DB: genai_tracker
+      # PG_USER: genai_tracker
+      # PG_PASSWORD: change-me
+
+      # COLLECTOR_API_KEY: change-me              # unset = REST/WS API is open (fine for closed test networks only)
+
+      ALERTING_ENABLED: "false"                   # set "true" to enable
+      # ALERT_WEBHOOK_URL: https://hooks.slack.com/services/...
+      # ALERT_ERROR_RATE_THRESHOLD: "0.25"
+      # ALERT_LATENCY_MS_THRESHOLD: "5000"
+      # ALERT_WINDOW_MINUTES: "10"
+
+      # PRICING_OVERRIDES_JSON: '{"openai":{"gpt-4o":{"input_per_1k":0.0025,"output_per_1k":0.01,"context_window":128000}}}'
+
+      # Devices the /demo sender can relay a test call to (see docs) --
+      # defaults already match device-1/2/3 below, only needed if you add,
+      # rename, or remove devices.
+      # DEVICE_PROXIES_JSON: '{"device-1":"http://device-1:8000","device-2":"http://device-2:8000","device-3":"http://device-3:8000"}'
+    volumes:
+      - collector-data:/data
+      # - ./mosquitto/config/certs:/mosquitto-certs:ro   # if using TLS
+    ports:
+      - "9000:8000"   # GET http://localhost:9000/events  /stats  /traces/{id}  /anomalies  /dashboard
+    networks:
+      - genai-net
+
+  # --- Test-only mock provider (swap TARGET_BASE_URL below for a real one) --
+
+  mock-genai:
+    build: ./mock-genai
+    container_name: mock-genai
+    networks:
+      - genai-net
+
+  # --- Simulated devices, each running its own tracking proxy --------
+  # (all three share the same env-var shape; only DEVICE_ID/port differ)
+
+  device-1:
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
+    container_name: device-1
+    depends_on:
+      - mosquitto
+      - mock-genai
+    environment:
+      DEVICE_ID: device-1
+      TARGET_BASE_URL: http://mock-genai:8000
+      PROVIDER_NAME: mock-openai
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      # MQTT_USERNAME: alice
+      # MQTT_PASSWORD: supersecret
+      # MQTT_USE_TLS: "true"
+      # MQTT_CA_CERT: /mosquitto-certs/ca.crt
+      RATE_LIMIT_ENABLED: "false"                # set "true" to cap this device's call rate
+      # RATE_LIMIT_RPS: "5"
+      # RATE_LIMIT_BURST: "10"
+      REPLAY_CAPTURE: "false"                    # set "true" (+ REPLAY_ENCRYPTION_KEY) to store encrypted full bodies
+      # REPLAY_ENCRYPTION_KEY: ""                # generate: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      REDACT_BODY: "true"
+    ports:
+      - "8101:8000"
+    # volumes:
+    #   - ./mosquitto/config/certs:/mosquitto-certs:ro   # if using TLS
+    networks:
+      - genai-net
+
+  device-2:
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
+    container_name: device-2
+    depends_on:
+      - mosquitto
+      - mock-genai
+    environment:
+      DEVICE_ID: device-2
+      TARGET_BASE_URL: http://mock-genai:8000
+      PROVIDER_NAME: mock-openai
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      RATE_LIMIT_ENABLED: "false"
+      REPLAY_CAPTURE: "false"
+      REDACT_BODY: "true"
+    ports:
+      - "8102:8000"
+    networks:
+      - genai-net
+
+  device-3:
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
+    container_name: device-3
+    depends_on:
+      - mosquitto
+      - mock-genai
+    environment:
+      DEVICE_ID: device-3
+      TARGET_BASE_URL: http://mock-genai:8000
+      PROVIDER_NAME: mock-openai
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      RATE_LIMIT_ENABLED: "false"
+      REPLAY_CAPTURE: "false"
+      REDACT_BODY: "true"
+    ports:
+      - "8103:8000"
+    networks:
+      - genai-net
+
+volumes:
+  mosquitto-data:
+  collector-data:
+  postgres-data:
+
+networks:
+  genai-net:
+    driver: bridge

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Large Prompt Collider - Dashboard</title>
+<style>
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  margin: 20px;
+  color: #222;
+  background: #fff;
+}
+h1 {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+p.desc {
+  color: #555;
+  margin-top: 0;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 20px;
+}
+th, td {
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+  text-align: left;
+}
+th {
+  background: #eee;
+}
+.summary {
+  margin-bottom: 20px;
+}
+.summary table {
+  width: auto;
+}
+.summary td {
+  padding: 4px 12px;
+}
+.error {
+  color: #b00000;
+}
+fieldset {
+  margin-bottom: 20px;
+}
+legend {
+  font-weight: bold;
+}
+#liveFeed {
+  border: 1px solid #ccc;
+  height: 220px;
+  overflow-y: scroll;
+  padding: 6px;
+  font-family: monospace;
+  font-size: 12px;
+  background: #fafafa;
+}
+#liveFeed div {
+  border-bottom: 1px dotted #ddd;
+  padding: 2px 0;
+}
+.status-line {
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #555;
+}
+a {
+  color: #0645ad;
+}
+</style>
+</head>
+<body>
+
+<h1>Large Prompt Collider - Dashboard</h1>
+<p class="desc">
+  Overview of tracked GenAI calls across devices.
+  <a id="demoLink" href="/demo">Send a test request</a>
+  |
+  <a id="eventsLink" href="/events/view">View events</a>
+</p>
+
+<div class="status-line" id="liveStatus">connecting to live feed...</div>
+
+<fieldset>
+<legend>Summary</legend>
+<table class="summary" id="summaryTable">
+  <tr><td>Total calls</td><td id="sTotalCalls">-</td></tr>
+  <tr><td>Devices</td><td id="sDevices">-</td></tr>
+  <tr><td>Total tokens</td><td id="sTokens">-</td></tr>
+  <tr><td>Estimated cost</td><td id="sCost">-</td></tr>
+  <tr><td>Errors</td><td id="sErrors">-</td></tr>
+</table>
+</fieldset>
+
+<fieldset>
+<legend>Per-device stats</legend>
+<table id="statsTable">
+  <thead>
+    <tr>
+      <th>Device</th>
+      <th>Provider</th>
+      <th>Calls</th>
+      <th>Avg latency</th>
+      <th>Tokens</th>
+      <th>Est. cost</th>
+      <th>Errors</th>
+    </tr>
+  </thead>
+  <tbody id="statsBody">
+    <tr><td colspan="7">loading...</td></tr>
+  </tbody>
+</table>
+</fieldset>
+
+<fieldset>
+<legend>Anomalies</legend>
+<div id="anomaliesBody">none detected</div>
+</fieldset>
+
+<fieldset>
+<legend>Live event feed</legend>
+<div id="liveFeed"></div>
+</fieldset>
+
+<script>
+var apiKey = new URLSearchParams(location.search).get('api_key') || '';
+var headers = apiKey ? { 'X-API-Key': apiKey } : {};
+
+function loadStats() {
+  fetch('/stats', { headers: headers })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var rows = data.by_device || [];
+
+      var totalCalls = 0, totalErrors = 0, totalCost = 0, totalTokens = 0;
+      rows.forEach(function(r) {
+        totalCalls += r.responses || 0;
+        totalErrors += r.error_count || 0;
+        totalCost += r.estimated_cost_usd || 0;
+        totalTokens += r.total_tokens || 0;
+      });
+
+      document.getElementById('sTotalCalls').textContent = totalCalls;
+      document.getElementById('sDevices').textContent = rows.length;
+      document.getElementById('sTokens').textContent = totalTokens;
+      document.getElementById('sCost').textContent = '$' + totalCost.toFixed(4);
+      var errEl = document.getElementById('sErrors');
+      errEl.textContent = totalErrors;
+      errEl.className = totalErrors > 0 ? 'error' : '';
+
+      var body = document.getElementById('statsBody');
+      if (rows.length === 0) {
+        body.innerHTML = '<tr><td colspan="7">no data yet</td></tr>';
+        return;
+      }
+      body.innerHTML = rows.map(function(r) {
+        var errClass = (r.error_count > 0) ? ' class="error"' : '';
+        return '<tr>' +
+          '<td>' + (r.device_id || '-') + '</td>' +
+          '<td>' + (r.provider || '-') + '</td>' +
+          '<td>' + (r.responses || 0) + '</td>' +
+          '<td>' + (r.avg_latency_ms ? Math.round(r.avg_latency_ms) + 'ms' : '-') + '</td>' +
+          '<td>' + (r.total_tokens || 0) + '</td>' +
+          '<td>' + (r.estimated_cost_usd != null ? '$' + r.estimated_cost_usd.toFixed(4) : 'n/a') + '</td>' +
+          '<td' + errClass + '>' + (r.error_count || 0) + '</td>' +
+          '</tr>';
+      }).join('');
+    });
+}
+
+function loadAnomalies() {
+  fetch('/anomalies', { headers: headers })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var findings = data.findings || [];
+      var el = document.getElementById('anomaliesBody');
+      if (findings.length === 0) {
+        el.textContent = 'none detected';
+        return;
+      }
+      el.innerHTML = findings.map(function(f) {
+        return '<div>' + f.device_id + ' - ' + f.kind + ': ' + f.detail + '</div>';
+      }).join('');
+    });
+}
+
+function connectLive() {
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  var ws = new WebSocket(proto + '://' + location.host + '/ws/events' + (apiKey ? '?api_key=' + apiKey : ''));
+  var statusEl = document.getElementById('liveStatus');
+  var feed = document.getElementById('liveFeed');
+
+  ws.onopen = function() { statusEl.textContent = 'live feed connected'; };
+  ws.onclose = function() {
+    statusEl.textContent = 'live feed disconnected, retrying...';
+    setTimeout(connectLive, 2000);
+  };
+  ws.onmessage = function(e) {
+    var ev = JSON.parse(e.data);
+    var isErr = ev.direction === 'response' && (ev.error || (ev.status_code && ev.status_code >= 400));
+    var line = document.createElement('div');
+    if (isErr) line.className = 'error';
+    line.textContent = (ev.timestamp || '') + '  ' + (ev.device_id || '') + '  ' +
+      (ev.direction || '') + '  ' + (ev.model || '') + '  ' + (ev.status_code || '');
+    feed.insertBefore(line, feed.firstChild);
+    while (feed.children.length > 100) {
+      feed.removeChild(feed.lastChild);
+    }
+    if (ev.direction === 'response') {
+      loadStats();
+    }
+  };
+}
+
+loadStats();
+loadAnomalies();
+connectLive();
+setInterval(loadStats, 15000);
+setInterval(loadAnomalies, 30000);
+if (apiKey) {
+  document.getElementById('demoLink').href = '/demo?api_key=' + apiKey;
+  document.getElementById('eventsLink').href = '/events/view?api_key=' + apiKey;
+}
+</script>
+
+</body>
+</html>

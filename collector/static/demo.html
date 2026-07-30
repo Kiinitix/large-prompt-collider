@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Large Prompt Collider - Send Test Request</title>
+<style>
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  margin: 20px;
+  color: #222;
+  background: #fff;
+  max-width: 600px;
+}
+h1 {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+p.desc {
+  color: #555;
+  margin-top: 0;
+}
+label {
+  display: block;
+  margin-top: 12px;
+  font-weight: bold;
+}
+select, input[type=text], textarea {
+  width: 100%;
+  padding: 5px;
+  font-family: inherit;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+textarea {
+  height: 80px;
+}
+button {
+  margin-top: 14px;
+  padding: 6px 16px;
+  font-size: 14px;
+}
+.status {
+  margin-top: 10px;
+  font-size: 13px;
+}
+.status.error {
+  color: #b00000;
+}
+.status.ok {
+  color: #006000;
+}
+pre {
+  background: #f5f5f5;
+  border: 1px solid #ccc;
+  padding: 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+table.meta {
+  font-size: 12px;
+  color: #555;
+  margin-top: 10px;
+}
+table.meta td {
+  padding: 2px 8px 2px 0;
+}
+.top-link {
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+</style>
+</head>
+<body>
+
+<div class="top-link"><a href="/dashboard">back to dashboard</a> | <a href="/events/view">view events</a></div>
+
+<h1>Send Test Request</h1>
+<p class="desc">Send a test call through a device's tracking proxy.</p>
+
+<label for="device">Device</label>
+<select id="device"><option>loading...</option></select>
+
+<label for="model">Model</label>
+<input type="text" id="model" value="mock-model">
+
+<label for="message">Message</label>
+<textarea id="message">Hello, give me a short fun fact.</textarea>
+
+<label><input type="checkbox" id="stream" style="width:auto;"> Request a streaming response</label>
+
+<button id="sendBtn">Send</button>
+<div class="status" id="status"></div>
+
+<div id="resultBox" style="display:none;">
+  <table class="meta" id="resultMeta"></table>
+  <pre id="resultBody"></pre>
+</div>
+
+<script>
+var apiKey = new URLSearchParams(location.search).get('api_key') || '';
+var headers = Object.assign({ 'Content-Type': 'application/json' }, apiKey ? { 'X-API-Key': apiKey } : {});
+
+var deviceSelect = document.getElementById('device');
+var sendBtn = document.getElementById('sendBtn');
+var statusEl = document.getElementById('status');
+var resultBox = document.getElementById('resultBox');
+var resultMeta = document.getElementById('resultMeta');
+var resultBody = document.getElementById('resultBody');
+
+function loadDevices() {
+  fetch('/demo/devices', { headers: headers })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var devices = data.devices || [];
+      if (devices.length === 0) {
+        deviceSelect.innerHTML = '<option disabled>no devices configured</option>';
+        return;
+      }
+      deviceSelect.innerHTML = devices.map(function(d) {
+        return '<option value="' + d + '">' + d + '</option>';
+      }).join('');
+    })
+    .catch(function() {
+      deviceSelect.innerHTML = '<option disabled>failed to load devices</option>';
+    });
+}
+
+function send() {
+  var device_id = deviceSelect.value;
+  var message = document.getElementById('message').value.trim();
+  var model = document.getElementById('model').value.trim() || 'mock-model';
+  var stream = document.getElementById('stream').checked;
+
+  if (!device_id || !message) {
+    statusEl.textContent = 'Pick a device and enter a message first.';
+    statusEl.className = 'status error';
+    return;
+  }
+
+  sendBtn.disabled = true;
+  statusEl.textContent = 'Sending...';
+  statusEl.className = 'status';
+  resultBox.style.display = 'none';
+
+  var startedAt = performance.now();
+
+  fetch('/demo/send', {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify({ device_id: device_id, message: message, model: model, stream: stream })
+  })
+  .then(function(res) {
+    var elapsed = Math.round(performance.now() - startedAt);
+    return res.json().then(function(data) {
+      return { res: res, data: data, elapsed: elapsed };
+    });
+  })
+  .then(function(result) {
+    sendBtn.disabled = false;
+    if (!result.res.ok) {
+      statusEl.textContent = 'Error: ' + (result.data.detail || result.res.statusText);
+      statusEl.className = 'status error';
+      return;
+    }
+    statusEl.textContent = 'Done in ' + result.elapsed + 'ms';
+    statusEl.className = 'status ok';
+
+    resultMeta.innerHTML =
+      '<tr><td>Device</td><td>' + result.data.device_id + '</td></tr>' +
+      '<tr><td>Status code</td><td>' + result.data.status_code + '</td></tr>' +
+      '<tr><td>Round trip</td><td>' + result.elapsed + 'ms</td></tr>';
+    resultBody.textContent = JSON.stringify(result.data.response, null, 2);
+    resultBox.style.display = 'block';
+  })
+  .catch(function(err) {
+    sendBtn.disabled = false;
+    statusEl.textContent = 'Request failed: ' + err;
+    statusEl.className = 'status error';
+  });
+}
+
+sendBtn.addEventListener('click', send);
+loadDevices();
+if (apiKey) {
+  var navLinks = document.querySelectorAll('.top-link a');
+  navLinks.forEach(function(a) {
+    a.href = a.getAttribute('href') + '?api_key=' + apiKey;
+  });
+}
+</script>
+
+</body>
+</html>

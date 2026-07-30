@@ -1,0 +1,16 @@
+# Copy this to mosquitto.conf (or merge with it) to require MQTT auth.
+#
+# Setup:
+#   1. Generate the password file:  ./mosquitto/gen-passwd.sh alice supersecret
+#      (creates mosquitto/config/passwd; run again with different
+#      username/password pairs to add more users -- see gen-passwd.sh)
+#   2. Mount mosquitto/config/passwd into the container (docker-compose.yml
+#      already does this if MQTT_AUTH_ENABLED is set -- see its comments).
+#   3. Set MQTT_USERNAME / MQTT_PASSWORD on every proxy and the collector.
+
+listener 1883
+allow_anonymous false
+password_file /mosquitto/config/passwd
+persistence true
+persistence_location /mosquitto/data/
+log_dest stdout
