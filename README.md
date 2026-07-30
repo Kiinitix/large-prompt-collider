@@ -1,4 +1,4 @@
-# GenAI Activity Tracker
+# Large Prompt Collider (LPC)
 
 A middleware system for tracking every GenAI request/response flowing through a private setup, built around a small custom protocol (**GATP - GenAI Activity Tracking Protocol**) carried over MQTT.
 
