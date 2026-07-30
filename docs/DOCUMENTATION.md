@@ -1,8 +1,6 @@
-# GenAI Activity Tracker - Documentation
+# Large Prompt Collider (LPC) - Documentation
 
-Complete reference for setup, configuration, and operation. For a quick
-overview, see the top-level `README.md`; this document goes deeper on
-running the pieces individually, configuration, and troubleshooting.
+Complete reference for setup, configuration, and operation. For a quick overview, see the top-level `README.md`; this document goes deeper on running the pieces individually, configuration, and troubleshooting.
 
 ## Table of contents
 
